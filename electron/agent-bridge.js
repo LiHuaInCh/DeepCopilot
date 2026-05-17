@@ -352,20 +352,35 @@ const AgentBridge = {
                 return;
             }
             case 'regenerate': {
+                // Frontend (chat.js) already removed the DOM bubbles before sending this.
+                // We just need to remove the last assistant message from run and session,
+                // then re-send the last user message.
                 const sid = _store ? _store.sessionId : null;
                 const run = sid ? _runs.get(sid) : null;
-                if (run && run.reply && run.reply.user) {
-                    const lastUserMsg = run.reply.user;
-                    for (let i = run.messages.length - 1; i >= 0; i--) {
-                        if (run.messages[i].role === 'assistant') {
-                            run.messages.splice(i, 1);
-                            break;
-                        }
-                    }
-                    run.reply.asst = '';
-                    run.reply.thoughts = '';
-                    return _loop?.handleSend(lastUserMsg);
+                if (!run || !run.reply || !run.reply.user) return;
+
+                const lastUserMsg = run.reply.user;
+
+                // Remove last assistant message from run.messages
+                for (let i = run.messages.length - 1; i >= 0; i--) {
+                    if (run.messages[i].role === 'assistant') { run.messages.splice(i, 1); break; }
                 }
+                run.reply = { user: lastUserMsg, asst: '', thoughts: '' };
+
+                // Also remove from session store
+                if (_store) {
+                    const list = _store.all();
+                    const s = list.find(x => x.id === sid);
+                    if (s && s.messages) {
+                        for (let i = s.messages.length - 1; i >= 0; i--) {
+                            if (s.messages[i].role === 'assistant') { s.messages.splice(i, 1); break; }
+                        }
+                        await _store.set(list);
+                    }
+                }
+
+                run.busy = false;
+                if (_loop) _loop.handleSend(lastUserMsg);
                 return;
             }
             case 'editUserSubmit': {

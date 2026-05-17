@@ -167,7 +167,7 @@ function buildMenu(mainWindow, configStore) {
             submenu: [
                 {
                     label: L('Deep Copilot 项目主页', 'Deep Copilot on GitHub'),
-                    click: () => shell.openExternal('https://github.com/ZhouChaunge/DeepCopilot'),
+                    click: () => shell.openExternal('https://github.com/LiHuaInCh/DeepCopilot'),
                 },
                 { type: 'separator' },
                 {
