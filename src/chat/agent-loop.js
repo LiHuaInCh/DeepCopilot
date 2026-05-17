@@ -19,6 +19,47 @@ const {
     estimateMessagesTokens, autoCompactIfNeeded, ToolArgsStreamer,
 } = require('./compact');
 
+// ─── Skill injection helper (Issue #61 — Step 3) ─────────────────────────────
+//
+// Appends a synthetic `read_file` tool_call + tool_result pair to `messages`.
+// Used by:
+//   1. UI slash-command path (handleSend's `skillContent` parameter), and
+//   2. the `skill_invoke` tool (Issue #61 — Step 4), so an agent-initiated
+//      skill load looks identical to a user-initiated one.
+//
+// Each call uses a unique tool_call_id (`synthetic_skill_read_<rand>`) so
+// nested or repeated skill loads in the same turn do not collide.
+//
+// @param {Array<{role:string, content:*}>} messages - run.messages array to push into
+// @param {string}   skillName - human-readable skill name for the path
+// @param {string}   body      - skill body (SKILL.md contents)
+// @param {string}   [skillPath] - real on-disk SKILL.md path; if omitted,
+//                                 falls back to the default deepcopilot dir.
+//                                 Pass the real path so the model sees the
+//                                 correct origin (e.g. ~/.claude/skills/...).
+function injectSyntheticSkillRead(messages, skillName, body, skillPath) {
+    const safeName = String(skillName || 'skill').replace(/[^a-z0-9-]/gi, '-');
+    const filePath = skillPath || `~/.deepcopilot/skills/${safeName}/SKILL.md`;
+    const callId = `synthetic_skill_read_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+    messages.push({
+        role: 'assistant',
+        content: null,
+        tool_calls: [{
+            id:       callId,
+            type:     'function',
+            function: {
+                name:      'read_file',
+                arguments: JSON.stringify({ path: filePath }),
+            },
+        }],
+    });
+    messages.push({
+        role:         'tool',
+        tool_call_id: callId,
+        content:      String(body || ''),
+    });
+}
+
 class AgentLoop {
     /**
      * @param {{
@@ -31,8 +72,7 @@ class AgentLoop {
      *   postToRun        : (run, msg) => void,
      *   post             : (msg) => void,
      *   postSessionList  : () => void,
-     *   buildAttachment  : (heavy: boolean) => string|null,
-     *   getIncludeCtx    : () => boolean,
+     *   buildAttachment  : () => string|null,
      * }} opts
      */
     constructor(opts) {
@@ -46,13 +86,17 @@ class AgentLoop {
         this._post           = opts.post;
         this._postSessionList = opts.postSessionList;
         this._buildAttachment = opts.buildAttachment;
-        this._getIncludeCtx  = opts.getIncludeCtx;
     }
 
     // ─── Main entry ──────────────────────────────────────────────────────────
 
     async handleSend(text, attachments = [], skillContent = null) {
-        if (!text?.trim()) return;
+        // Allow attachment-only turns (e.g. user sent just `#symbol:Foo` with
+        // no other text). Only reject when there is neither prose nor any
+        // attachment payload to ground the model on.
+        const hasText = !!(text && text.trim());
+        const hasAtt  = Array.isArray(attachments) && attachments.length > 0;
+        if (!hasText && !hasAtt) return;
 
         const existingActive = this._getRun(this._store.sessionId);
         if (existingActive && existingActive.busy) return;
@@ -77,7 +121,7 @@ class AgentLoop {
         const mode    = cfg.get('approvalMode') || 'manual';
 
         // Build attachment block (active editor context)
-        const attachment = this._buildAttachment(this._getIncludeCtx());
+        const attachment = this._buildAttachment();
         let attachmentBlocks = attachment ? attachment + '\n\n' : '';
         // Separate text attachments from image attachments (imageData = base64 data URI).
         const imageAttachments = (attachments || []).filter(a => a && a.imageData);
@@ -103,26 +147,9 @@ class AgentLoop {
         // The synthetic messages are inserted into run.messages BEFORE the user turn.
         if (skillContent) {
             const skillName = skillContent._skillName || 'skill';
+            const skillPath = skillContent._skillPath || null;
             const body      = typeof skillContent === 'string' ? skillContent : skillContent.body;
-            // assistant turn: announce reading the skill file
-            run.messages.push({
-                role: 'assistant',
-                content: null,
-                tool_calls: [{
-                    id:       'synthetic_skill_read',
-                    type:     'function',
-                    function: {
-                        name:      'read_file',
-                        arguments: JSON.stringify({ path: `~/.claude/skills/${skillName}/SKILL.md` }),
-                    },
-                }],
-            });
-            // tool result turn: the skill content
-            run.messages.push({
-                role:         'tool',
-                tool_call_id: 'synthetic_skill_read',
-                content:      body,
-            });
+            injectSyntheticSkillRead(run.messages, skillName, body, skillPath);
         }
         const fullText = attachmentBlocks ? attachmentBlocks + text : text;
 
@@ -164,14 +191,15 @@ class AgentLoop {
             });
         };
 
-        const sysPrompt = buildSystemPrompt({ includeWorkspaceInstructions: true });
+        const interactionMode = cfg.get('interactionMode') || 'agent';
+        const sysPrompt = buildSystemPrompt({ includeWorkspaceInstructions: true, mode: interactionMode });
         const _itersRaw = Number(cfg.get('maxIterations'));
         // 0 (or unset) means "run until task is complete" — stagnation detection
         // (repeat-tool hints + ABAB cycle guard) is the real runaway guard.
         const MAX_ITERS = (_itersRaw > 0) ? Math.min(200, _itersRaw) : 9999;
         const COMPACT_BUDGET = Math.max(8000, Number(cfg.get('compactBudgetTokens')) || 600000);
-        const askMode = (cfg.get('interactionMode') || 'agent') === 'ask';
-        Logger.info('INTERACTION_MODE', { mode: cfg.get('interactionMode') || 'agent' });
+        const askMode = interactionMode === 'ask';
+        Logger.info('INTERACTION_MODE', { mode: interactionMode });
 
         // spawn_agent is included here so multiple sub-agent calls issued in the
         // same turn are dispatched concurrently (Phase 1), matching the behaviour of
@@ -204,6 +232,18 @@ class AgentLoop {
                     run.messages = compactRes.messages;
                     Logger.info('AUTOCOMPACT', { sid, iter, dropped: compactRes.dropped });
                     this._postToRun(run, { type: 'status', text: isZh() ? '🗜 压缩历史…' : 'Compacting history…' });
+                    // Issue #82: persistent user-visible bubble so the user knows the
+                    // model's context just changed. Otherwise compaction is invisible
+                    // and the user only notices when the model starts "hallucinating"
+                    // earlier file contents.
+                    this._postToRun(run, {
+                        type: 'systemNotice',
+                        kind: 'autoCompact',
+                        title: isZh() ? '⚠️ 会话历史已自动压缩' : '⚠️ Conversation history auto-compacted',
+                        body:  isZh()
+                            ? `为适应上下文窗口，已折叠 ${compactRes.dropped} 条早期消息（包含工具调用结果与源码内容）。模型可能不再记得早期文件细节 —— 如需要，请重新提供关键文件。`
+                            : `${compactRes.dropped} earlier messages (including tool results and source content) have been collapsed to fit the context window. The model may no longer recall earlier file details — re-attach the key files if needed.`,
+                    });
                     postProgress('compacting');
                 }
                 checkAbort();
@@ -244,16 +284,34 @@ class AgentLoop {
                 let preflightTokens = estimateMessagesTokens(msgs);
                 let ctxLimitHit = false;
                 if (preflightTokens > MODEL_CTX_HARD_LIMIT) {
+                    // Track totals across (possibly two) emergency passes so we only
+                    // surface a single persistent system-notice card to the user.
+                    let emergencyTotalDropped = 0;
+                    let emergencyFinalKeepTail = 0;
                     for (const emergencyKeepTail of [6, 3]) {
                         const agg = autoCompactIfNeeded(run.messages, Math.floor(MODEL_CTX_HARD_LIMIT * 0.7), emergencyKeepTail);
                         if (agg.compacted) {
                             run.messages = agg.messages;
                             Logger.info('PREFLIGHT_COMPACT', { sid, iter, before: preflightTokens, keepTail: emergencyKeepTail, dropped: agg.dropped });
                             this._postToRun(run, { type: 'status', text: isZh() ? '⚠️ 上下文接近上限，已紧急压缩历史…' : 'Context near limit — emergency compaction applied…' });
+                            emergencyTotalDropped += (agg.dropped || 0);
+                            emergencyFinalKeepTail = emergencyKeepTail;
                         }
                         const newTokens = estimateMessagesTokens([{ role: 'system', content: sysPrompt }, ...run.messages]);
                         if (newTokens <= MODEL_CTX_HARD_LIMIT) break;
                         preflightTokens = newTokens;
+                    }
+                    // Single aggregated persistent notice (Issue #82) — avoids
+                    // showing two near-identical cards when both keepTail passes run.
+                    if (emergencyTotalDropped > 0) {
+                        this._postToRun(run, {
+                            type: 'systemNotice',
+                            kind: 'autoCompact',
+                            title: isZh() ? '⚠️ 上下文接近上限，已紧急压缩历史' : '⚠️ Context near limit — emergency compaction applied',
+                            body:  isZh()
+                                ? `会话已接近模型上下文窗口上限，仅保留最近 ${emergencyFinalKeepTail} 条消息与首条用户提问，折叠了 ${emergencyTotalDropped} 条早期消息。如需继续，建议重新提供关键文件或按 Ctrl+K 清理会话后重新提问。`
+                                : `Session is near the model context window limit. Only the most recent ${emergencyFinalKeepTail} messages and the first user prompt are kept; ${emergencyTotalDropped} earlier messages were collapsed. Re-attach key files if needed, or press Ctrl+K to clear and start fresh.`,
+                        });
                     }
 
                     // Last resort: if still over the limit, refuse to call the API and tell the user
@@ -563,4 +621,4 @@ class AgentLoop {
     }
 }
 
-module.exports = { AgentLoop };
+module.exports = { AgentLoop, injectSyntheticSkillRead };

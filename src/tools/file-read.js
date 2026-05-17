@@ -6,6 +6,8 @@ const fs       = require('fs');
 const path     = require('path');
 const cp       = require('child_process');
 const readline = require('readline');
+const vscode   = require('../vscode-shim');
+
 const { wsRoot, resolvePath } = require('../utils/paths');
 const { t }                   = require('../utils/i18n');
 const { truncate, ensurePathAllowed } = require('./utils');
@@ -251,13 +253,8 @@ async function toolFindFiles(args) {
             return truncate(lines.join('\n') || '(no matches)');
         }
         try {
-            // Use glob as fallback when ripgrep is not available
-            try {
-                const { globSync } = require('glob');
-                const cwd = root || process.cwd();
-                const results = globSync(pattern, { cwd, nodir: true, ignore: '**/node_modules/**', maxResults: max });
-                return truncate(results.map(r => path.resolve(cwd, r)).join('\n') || '(no matches)');
-            } catch (ge) { return `Error: ${ge.message}`; }
+            const uris = await vscode.workspace.findFiles(pattern, '**/node_modules/**', max);
+            return truncate(uris.map(u => u.fsPath).join('\n') || '(no matches)');
         } catch (e) { return `Error: ${e.message}`; }
     } catch (e) { return `Error: ${e.message}`; }
 }

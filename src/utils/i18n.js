@@ -196,4 +196,14 @@ function t(key) {
     return bundle[key] != null ? bundle[key] : (EN[key] != null ? EN[key] : key);
 }
 
-module.exports = { t, isZh };
+function tf(key, params) {
+    let s = t(key);
+    if (params) {
+        for (const k of Object.keys(params)) {
+            s = s.split('{' + k + '}').join(String(params[k]));
+        }
+    }
+    return s;
+}
+
+module.exports = { t, tf, isZh };
