@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en" data-locale="en">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval' data:; img-src 'self' https: data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; font-src 'self' data:;">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Deep Copilot</title>
+<link rel="stylesheet" href="codicon.css">
+<link rel="stylesheet" href="katex.min.css">
+<link rel="stylesheet" href="chat.css">
+<script>
+// Detect locale early
+(function(){
+  var lang = (navigator.language || navigator.userLanguage || 'en').toLowerCase();
+  var isZh = lang.startsWith('zh');
+  document.documentElement.lang = isZh ? 'zh' : 'en';
+  document.documentElement.dataset.locale = isZh ? 'zh' : 'en';
+})();
+</script>
+</head>
+<body>
+<div id="prog" class="prog"></div>
+<button id="cbt" style="display:none" aria-hidden="true"></button>
+<button id="edgeL" class="edge-toggle edge-l" title="Plan / Todos" aria-label="toggle left panel"></button>
+<button id="edgeR" class="edge-toggle edge-r" title="Sessions" aria-label="toggle right panel"></button>
+<div id="sb"></div>
+<aside id="left">
+  <section class="pnl" id="planPnl" data-open="1">
+    <div class="ph"><span class="pchev">▾</span> Plan <span class="cnt" id="plan-cnt"></span></div>
+    <div class="pb" id="plan-body"><div class="empty">No active plan</div></div>
+  </section>
+  <section class="pnl" id="todoPnl" data-open="1">
+    <div class="ph"><span class="pchev">▾</span> Todos <span class="cnt" id="todo-cnt"></span></div>
+    <div class="pb" id="todo-body"><div class="empty">No todos</div></div>
+  </section>
+  <section class="pnl pnl-mini" id="agentPnl" data-open="0">
+    <div class="ph"><span class="pchev">▸</span> Agents <span class="cnt" id="agent-cnt">0</span></div>
+    <div class="pb" id="agent-body" style="display:none"><div class="empty">No agents</div></div>
+  </section>
+</aside>
+<div id="main">
+  <div id="es">
+    <div class="big"><img class="welcome-logo" src="../imgs/logo_black_bg.png" alt="Deep Copilot"/></div>
+    <p><strong>Deep Copilot</strong><br>让高质量 AI 生产力开放、公平、普惠</p>
+    <p class="hint">输入消息，按 Enter 发送</p></div>
+  <div id="thk">● ● ● 思考中...</div>
+</div>
+<aside id="right">
+  <div class="rh">
+    <span class="rt">历史会话</span>
+  </div>
+  <div class="rscope">
+    <button id="scopeWs" class="on" title="只显示当前工作区会话">本工作区</button>
+    <button id="scopeAll" title="全部">全部</button>
+  </div>
+  <div class="rsearch"><input id="dsearch" type="text" placeholder="搜索会话..."/></div>
+  <div class="rnew">
+    <button id="newSessionBtn" class="new-session-btn" title="新建会话">
+      <span class="icon">+</span>
+      <span class="text">新建会话</span>
+    </button>
+  </div>
+  <div class="rlist" id="dlist"><div class="empty">暂无会话</div></div>
+</aside>
+<div id="ia">
+  <div id="cxb">📎 将附带当前文件 / 选中代码</div>
+  <div id="pop" class="pop" style="display:none"></div>
+  <div id="composer-card">
+    <div id="at-chips"></div>
+    <div id="inp-row">
+      <div id="skill-notice"></div>
+      <textarea id="inp" rows="1" placeholder="描述要构建的内容"></textarea>
+    </div>
+    <div id="composer-bar">
+      <div class="cb-left">
+        <button id="cxbt" class="cbtn" title="包含当前文件 / 选中代码">📎</button>
+        <div id="modelPicker" class="mode-picker" data-model="deepseek-v4-pro">
+          <button id="modelBtn" class="cbtn mode-trigger" title="切换模型">⚡ v4-pro <span class="mode-chev">▾</span></button>
+          <div id="modelDrop" class="mode-drop" style="display:none"></div>
+        </div>
+        <div id="modePicker" class="mode-picker" data-m="manual">
+          <button id="modeBtn" class="cbtn mode-trigger" title="批准策略 (Approval Mode)">🛡 Manual <span class="mode-chev">▾</span></button>
+          <div id="modeDrop" class="mode-drop" style="display:none"></div>
+        </div>
+      </div>
+      <button id="sbtn" title="发送">↑</button>
+    </div>
+  </div>
+</div>
+<div id="foot">
+  <div class="ft-left">
+    <span class="dot" id="dot"></span>
+    <span id="ft-mode">agent · deepseek-v4-pro</span>
+  </div>
+  <div class="ft-right">
+    <button class="ft-btn" id="apibt" title="API 设置 · DeepSeek / Tavily / Base URL">🔑</button>
+    <span class="pill" id="ft-cache" title="prompt 缓存命中率（越高越省钱）">💾 0%</span>
+    <span class="pill" id="ft-tokens">0 tokens</span>
+    <span class="pill" id="ft-cost" style="color:#e8b86d">¥0.0000</span>
+    <span class="pill" id="ft-balance" title="账户余额（点击刷新）">💰 查询中…</span>
+  </div>
+</div>
+<!-- ── Settings Modal ── -->
+<div id="settings-overlay" class="settings-overlay" style="display:none" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+  <div class="settings-modal">
+    <div class="settings-header">
+      <span class="settings-title" id="settings-title">⚙ API &amp; Keys</span>
+      <button class="settings-close" id="settingsCloseBtn" title="Close" aria-label="Close">✕</button>
+    </div>
+    <div class="settings-body">
+      <div class="settings-section">
+        <div class="settings-section-label">DeepSeek AI</div>
+        <div class="settings-field">
+          <label class="settings-label" for="s-ds-key">API Key <span class="settings-required">*</span></label>
+          <div class="settings-input-row">
+            <input type="password" id="s-ds-key" class="settings-input" placeholder="sk-..." autocomplete="off" spellcheck="false"/>
+            <button class="settings-eye-btn" id="s-ds-key-eye" title="Show / hide" aria-label="Toggle key visibility">👁</button>
+          </div>
+          <div class="settings-test-row">
+            <button class="settings-test-btn" id="s-ds-test">▶ Test connection</button>
+            <span class="settings-test-result" id="s-ds-result"></span>
+          </div>
+          <a class="settings-link" id="s-ds-link" href="#">↗ platform.deepseek.com/api_keys</a>
+        </div>
+        <div class="settings-field">
+          <label class="settings-label" for="s-base-url">Base URL</label>
+          <div class="settings-input-row">
+            <input type="text" id="s-base-url" class="settings-input" placeholder="https://api.deepseek.com" autocomplete="off" spellcheck="false"/>
+            <button class="settings-reset-btn" id="s-base-url-reset" title="Reset to default">↺</button>
+          </div>
+          <span class="settings-hint">Works with any OpenAI-compatible endpoint</span>
+        </div>
+      </div>
+      <div class="settings-divider"></div>
+      <div class="settings-section">
+        <div class="settings-section-label">Web Search <span class="settings-section-badge">Tavily</span></div>
+        <div class="settings-field">
+          <label class="settings-label" for="s-tv-key">API Key <span class="settings-optional">(optional)</span></label>
+          <div class="settings-input-row">
+            <input type="password" id="s-tv-key" class="settings-input" placeholder="tvly-..." autocomplete="off" spellcheck="false"/>
+            <button class="settings-eye-btn" id="s-tv-key-eye" title="Show / hide" aria-label="Toggle key visibility">👁</button>
+          </div>
+          <div class="settings-test-row">
+            <button class="settings-test-btn" id="s-tv-test">▶ Test connection</button>
+            <span class="settings-test-result" id="s-tv-result"></span>
+          </div>
+          <a class="settings-link" id="s-tv-link" href="#">↗ app.tavily.com · 1000 free searches/month</a>
+        </div>
+      </div>
+    </div>
+    <div class="settings-dirty-bar" id="s-dirty-bar" style="display:none">
+      <span class="settings-dirty-msg">⚠ Unsaved changes</span>
+      <button class="settings-discard-btn" id="s-discard">Discard</button>
+    </div>
+    <div class="settings-footer">
+      <button class="settings-cancel-btn" id="settingsCancelBtn">Cancel</button>
+      <button class="settings-save-btn" id="settingsSaveBtn">Save</button>
+    </div>
+  </div>
+</div>
+<script src="katex.min.js"></script>
+<script src="purify.min.js"></script>
+<script src="chat.js"></script>
+<script src="features.js"></script>
+</body></html>

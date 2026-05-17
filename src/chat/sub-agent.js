@@ -13,7 +13,7 @@
 'use strict';
 
 const https = require('https');
-const vscode = require('vscode');
+const vscode = require('../vscode-shim');
 const { Logger }         = require('../logger');
 const { streamDeepSeek } = require('../api/deepseek');
 const { getToolDefs }    = require('../tools/schema');

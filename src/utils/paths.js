@@ -1,7 +1,7 @@
 // Workspace path helpers.
 'use strict';
 
-const vscode = require('vscode');
+const vscode = require('../vscode-shim');
 const path = require('path');
 const os = require('os');
 

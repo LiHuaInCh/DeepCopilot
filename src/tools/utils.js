@@ -5,7 +5,7 @@
 // Keep this file small — only add things needed by ≥2 tool sub-modules.
 'use strict';
 
-const vscode = require('vscode');
+const vscode = require('../vscode-shim');
 const { t } = require('../utils/i18n');
 
 // ─── Output truncation ───────────────────────────────────────────────────────

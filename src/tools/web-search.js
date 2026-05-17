@@ -47,10 +47,10 @@ async function toolWebSearch(args, ctx = {}) {
         if (!query) return 'Error: query is empty.';
 
         const secrets = ctx && ctx.secrets;
-        if (!secrets) return 'Error: SecretStorage unavailable (internal).';
+        if (!secrets) return 'Error: credential store unavailable (internal).';
         const apiKey  = await secrets.get('deepseekAgent.tavilyKey');
         if (!apiKey) {
-            return 'Error: Tavily API key not configured. Run command "Deep Copilot: Set Tavily API Key" (or visit https://app.tavily.com to get a free key), then retry.';
+            return 'Error: Tavily API key not configured. Open settings (bottom-right 🔑) or visit https://app.tavily.com to get a free key.';
         }
 
         const max          = Math.max(1, Math.min(10, Number.isFinite(args.max_results) ? args.max_results : 5));

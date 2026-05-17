@@ -3,17 +3,34 @@
 // "DeepSeek") are intentionally NEVER translated.
 'use strict';
 
-const vscode = require('vscode');
+const vscode = require('../vscode-shim');
+const os = require('os');
 
 function isZh() {
     try {
-        const lang = (vscode.env && vscode.env.language) || 'en';
-        return lang.toLowerCase().startsWith('zh');
+        // Electron main process
+        if (typeof global !== 'undefined' && global.__deepcopilot && global.__deepcopilot.locale) {
+            return global.__deepcopilot.locale.startsWith('zh');
+        }
+        // VS Code shim
+        const lang = (vscode.env && vscode.env.language) || '';
+        if (lang && lang !== 'en') return lang.toLowerCase().startsWith('zh');
+        // Fallback: check OS locale
+        const lc = process.env.LANG || process.env.LANGUAGE || process.env.LC_ALL || '';
+        if (lc) return lc.toLowerCase().startsWith('zh');
+        // Check platform locale on Windows
+        if (process.platform === 'win32') {
+            try {
+                const out = require('child_process').execSync('chcp 2>&1', { encoding: 'utf8', timeout: 1000 });
+                if (out.includes('936')) return true; // GBK codepage = Chinese
+            } catch {}
+        }
+        return false;
     } catch { return false; }
 }
 
 const EN = {
-    apiKeyPrompt: 'Enter your DeepSeek API key (saved to VS Code SecretStorage)',
+    apiKeyPrompt: 'Enter your DeepSeek API key (stored locally)',
     apiKeySaved: 'Deep Copilot: API key saved.',
     apiKeyDeleted: 'Deep Copilot: API key removed.',
     apiKeyMissing: 'Please set your DeepSeek API key first — click the key icon in the toolbar.',
@@ -51,7 +68,6 @@ const EN = {
     deniedReadonly: 'Denied: Read-Only mode is active.',
     writeFileLabel: 'Write file: ',
     runCmdLabel: 'Run: ',
-    createSkillLabel: 'Create skill: ',
     insertNoEditor: 'Open a file in the editor first.',
     inserted: 'Code inserted.',
     copied: 'Copied to clipboard.',
@@ -82,7 +98,9 @@ const EN = {
     wvNewSession:       'New Session',
     wvNoSessions:       'No sessions',
     wvThinking:         '● ● ● Thinking...',
+    wvAttachBadge:      '📎 Will include current file / selection',
     wvInputPlaceholder: 'Describe what you want to build',
+    wvAttachTitle:      'Include current file / selection',
     wvSend:             'Send',
     wvApiTitle:         'API settings · DeepSeek / Tavily / Base URL',
     wvCacheTitle:       'Prompt cache hit rate (higher = cheaper)',
@@ -93,7 +111,7 @@ const EN = {
 };
 
 const ZH = {
-    apiKeyPrompt: '输入 DeepSeek API Key（保存到 VS Code SecretStorage，不会写入 settings.json）',
+    apiKeyPrompt: '输入 DeepSeek API Key（加密存储在本地）',
     apiKeySaved: 'Deep Copilot：API Key 已保存。',
     apiKeyDeleted: 'Deep Copilot：API Key 已删除。',
     apiKeyMissing: '请先设置 API Key — 点击工具栏 🔑 按钮。',
@@ -131,7 +149,6 @@ const ZH = {
     deniedReadonly: '已拒绝：当前为只读模式。',
     writeFileLabel: '写入文件：',
     runCmdLabel: '执行命令：',
-    createSkillLabel: '创建技能：',
     insertNoEditor: '请先在编辑器中打开一个文件。',
     inserted: '代码已插入编辑器。',
     copied: '已复制到剪贴板。',
@@ -162,7 +179,9 @@ const ZH = {
     wvNewSession:       '新建会话',
     wvNoSessions:       '暂无会话',
     wvThinking:         '● ● ● 思考中...',
+    wvAttachBadge:      '📎 将附带当前文件 / 选中代码',
     wvInputPlaceholder: '描述要构建的内容',
+    wvAttachTitle:      '包含当前文件 / 选中代码',
     wvSend:             '发送',
     wvApiTitle:         'API 设置 · DeepSeek / Tavily / Base URL',
     wvCacheTitle:       'prompt 缓存命中率（越高越省钱）',

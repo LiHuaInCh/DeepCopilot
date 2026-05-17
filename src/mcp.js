@@ -14,7 +14,7 @@
 
 const cp       = require('child_process');
 const readline = require('readline');
-const vscode   = require('vscode');
+const vscode   = require('./vscode-shim');
 const { Logger } = require('./logger');
 
 /** Sanitize a string to a safe function-name component ([a-zA-Z0-9_]). */

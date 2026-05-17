@@ -2,7 +2,7 @@
 'use strict';
 
 const cp     = require('child_process');
-const vscode = require('vscode');
+const vscode = require('../vscode-shim');
 
 const { wsRoot } = require('../utils/paths');
 const { t }      = require('../utils/i18n');
@@ -37,7 +37,6 @@ function isDangerous(cmd) {
 async function confirmDangerous(cmd, abortSignal) {
     const dialog = vscode.window.showWarningMessage(
         `${t('dangerCmdTitle')}\n\n${cmd}`,
-        { modal: true },
         t('dangerAllowOnce'),
         t('dangerDeny'),
     );

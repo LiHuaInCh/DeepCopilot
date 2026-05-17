@@ -5,7 +5,7 @@
 // Dependencies: vscode, i18n. Never imports provider or agent-loop.
 'use strict';
 
-const vscode = require('vscode');
+const vscode = require('../vscode-shim');
 const { t } = require('../utils/i18n');
 
 class SessionStore {
