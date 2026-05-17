@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/LiHuaInCh/DeepCopilot/releases/download/v0.1.0/DeepCopilot-v0.1.0-portable.zip">
+  <a href="https://github.com/LiHuaInCh/DeepCopilot/releases/download/v0.1.0/DeepCopilot-v0.1.0.zip">
     <img src="https://img.shields.io/badge/📥_下载-Windows_便携版_v0.1.0-0078d4?style=for-the-badge" alt="下载"/>
   </a>
 </p>
