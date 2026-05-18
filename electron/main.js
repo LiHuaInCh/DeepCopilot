@@ -255,6 +255,14 @@ function wireDialogCallbacks() {
     };
 }
 
+// Catch unhandled errors for debugging
+process.on('uncaughtException', (err) => {
+    Logger.info('UNCAUGHT', { error: err.message, stack: String(err.stack||'').slice(0, 500) });
+});
+process.on('unhandledRejection', (reason) => {
+    Logger.info('UNHANDLED', { reason: String(reason&&reason.message||reason).slice(0, 500) });
+});
+
 // ── App lifecycle ────────────────────────────────────────────────────────
 app.whenReady().then(() => {
     Logger.info('APP_START', { version: app.getVersion(), platform: process.platform, locale: appLocale, isZh });
