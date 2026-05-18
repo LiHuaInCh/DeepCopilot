@@ -113,7 +113,8 @@ class AgentLoop {
         const apiKey = await this._context.secrets.get('deepseekAgent.apiKey');
         const needsKey = !PROVIDER_PRESETS[provider] || !PROVIDER_PRESETS[provider].noApiKey;
         if (needsKey && !apiKey) {
-            this._post({ type: 'error', text: '请先设置 API Key — 点击工具栏 🔑 按钮' });
+            this._post({ type: 'userEcho', text: text || '' });
+            this._post({ type: 'error', text: '请先设置 API Key — 点击右下角 🔑 按钮' });
             return;
         }
 
