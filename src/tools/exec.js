@@ -14,8 +14,10 @@
 const { toolReadFile, toolListDir, toolGrepSearch, toolFindFiles } = require('./file-read');
 const { toolWriteFile, toolStrReplaceInFile, toolApplyPatch }     = require('./file-write');
 const { toolRunShell, isDangerous }                               = require('./shell');
+const { toolReadTerminal }                                        = require('./read-terminal');
 const { toolWebSearch }                                           = require('./web-search');
 const { toolWebFetch }                                            = require('./web-fetch');
+const { toolSavePlan }                                            = require('./save-plan');
 const { truncate }                                                = require('./utils');
 
 module.exports = {
@@ -27,8 +29,10 @@ module.exports = {
     toolStrReplaceInFile,
     toolApplyPatch,
     toolRunShell,
+    toolReadTerminal,
     toolWebSearch,
     toolWebFetch,
+    toolSavePlan,
     truncate,
     isDangerous,
 };

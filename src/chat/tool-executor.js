@@ -21,7 +21,8 @@ const { mcpManager }   = require('../mcp');
 
 const {
     toolReadFile, toolListDir, toolGrepSearch, toolFindFiles,
-    toolWriteFile, toolStrReplaceInFile, toolApplyPatch, toolRunShell, toolWebSearch, toolWebFetch,
+    toolWriteFile, toolStrReplaceInFile, toolApplyPatch, toolRunShell, toolReadTerminal, toolWebSearch, toolWebFetch,
+    toolSavePlan,
 } = require('../tools/exec');
 const { skillInvoke, skillCreate } = require('../tools/skill-tools');
 
@@ -59,8 +60,10 @@ class ToolExecutor {
             ['str_replace_in_file', (args)      => toolStrReplaceInFile(args)],
             ['apply_patch',         (args)      => toolApplyPatch(args)],
             ['run_shell',           (args, ctx) => toolRunShell(args, ctx)],
+            ['read_terminal',       (args, ctx) => toolReadTerminal(args, ctx)],
             ['web_search',          (args, ctx) => toolWebSearch(args, ctx)],
             ['web_fetch',           (args, ctx) => toolWebFetch(args, ctx)],
+            ['save_plan',           (args)      => toolSavePlan(args)],
         ]);
     }
 
@@ -132,12 +135,21 @@ class ToolExecutor {
 
     /** Normalize result to string, emit TOOL_RESULT log + toolResult event. Returns string. */
     logToolResult(run, tc, result, elapsedMs) {
+        // Extract structured fields from run_shell before potential stringification.
+        // shell.js returns an object on normal exit; error paths still return strings.
+        let exitCode;
+        if (tc.name === 'run_shell' && result && typeof result === 'object') {
+            exitCode = result.exitCode;
+        }
         if (typeof result !== 'string') {
             try { result = JSON.stringify(result); } catch { result = String(result); }
         }
-        const ok = !result.startsWith('Error');
+        // For structured run_shell results, ok is determined by exitCode (not prefix).
+        const ok = (exitCode !== undefined)
+            ? (exitCode === 0)
+            : !result.startsWith('Error');
         Logger.info('TOOL_RESULT', { id: tc.id, name: tc.name, elapsed_ms: elapsedMs, ok, output: result.slice(0, 2000) });
-        this._postToRun(run, { type: 'toolResult', id: tc.id, name: tc.name, ok, output: result.slice(0, 600) });
+        this._postToRun(run, { type: 'toolResult', id: tc.id, name: tc.name, ok, exitCode, output: result.slice(0, 600) });
         return result;
     }
 

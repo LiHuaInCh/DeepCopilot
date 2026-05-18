@@ -8,6 +8,8 @@
 const V4_PRO_DISCOUNT_END = Date.UTC(2026, 4, 31, 15, 59, 0); // 2026-05-31 23:59 Beijing (UTC+8)
 
 function getModelPricing(model) {
+    // Only DeepSeek models have known pricing; return null for all others.
+    if (typeof model !== 'string' || !model.startsWith('deepseek-')) return null;
     if (model === 'deepseek-v4-flash' || model === 'deepseek-reasoner' || model === 'deepseek-chat') {
         return { input: 1.0, cache_hit: 0.02, output: 2.0 };
     }
@@ -26,6 +28,19 @@ function computeCost(model, usage) {
     const cacheMiss = (usage.prompt_cache_miss_tokens != null)
         ? usage.prompt_cache_miss_tokens
         : Math.max(prompt - cacheHit, 0);
+    if (!p) {
+        return {
+            cost_cny: 0,
+            breakdown: {
+                cache_hit_tokens:  cacheHit,
+                cache_miss_tokens: cacheMiss,
+                completion_tokens: completion,
+                prompt_tokens:     prompt,
+                total_tokens:      usage.total_tokens || (prompt + completion),
+                pricing:           null,
+            },
+        };
+    }
     const cost =
         (cacheHit  / 1e6) * p.cache_hit +
         (cacheMiss / 1e6) * p.input +

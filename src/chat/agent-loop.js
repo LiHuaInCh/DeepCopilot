@@ -7,11 +7,12 @@
 
 const vscode = require('../vscode-shim');
 
+const path                 = require('path');
 const { Logger }           = require('../logger');
 const { friendlyError }    = require('../errors');
 const { computeCost }      = require('../pricing');
 const { buildSystemPrompt }= require('../prompts/system');
-const { streamDeepSeek }   = require('../api/deepseek');
+const { streamChat, PROVIDER_PRESETS } = require('../api/adapter');
 const { getToolDefs }      = require('../tools/schema');
 const { mcpManager }       = require('../mcp');
 const { isZh }             = require('../utils/i18n');
@@ -39,7 +40,12 @@ const {
 //                                 correct origin (e.g. ~/.claude/skills/...).
 function injectSyntheticSkillRead(messages, skillName, body, skillPath) {
     const safeName = String(skillName || 'skill').replace(/[^a-z0-9-]/gi, '-');
-    const filePath = skillPath || `~/.deepcopilot/skills/${safeName}/SKILL.md`;
+    // Issue #94: never emit a literal "~/..." path — it cannot be re-resolved
+    // by the model's real read_file call on Windows. Always use an absolute
+    // path under the canonical skills directory (kept in sync with skills.js).
+    const { DEEPCOPILOT_SKILLS_DIR } = require('../skills');
+    const filePath = skillPath
+        || path.join(DEEPCOPILOT_SKILLS_DIR, safeName, 'SKILL.md');
     const callId = `synthetic_skill_read_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
     messages.push({
         role: 'assistant',
@@ -101,8 +107,12 @@ class AgentLoop {
         const existingActive = this._getRun(this._store.sessionId);
         if (existingActive && existingActive.busy) return;
 
+        const cfg      = vscode.workspace.getConfiguration('deepseekAgent');
+        const provider = cfg.get('provider') || 'deepseek';
+
         const apiKey = await this._context.secrets.get('deepseekAgent.apiKey');
-        if (!apiKey) {
+        const needsKey = !PROVIDER_PRESETS[provider] || !PROVIDER_PRESETS[provider].noApiKey;
+        if (needsKey && !apiKey) {
             this._post({ type: 'error', text: '请先设置 API Key — 点击工具栏 🔑 按钮' });
             return;
         }
@@ -115,9 +125,8 @@ class AgentLoop {
         }
         run.busy = true;
 
-        const cfg     = vscode.workspace.getConfiguration('deepseekAgent');
         const model   = cfg.get('defaultModel') || 'deepseek-v4-pro';
-        const baseUrl = (cfg.get('apiBaseUrl') || '').trim() || 'https://api.deepseek.com';
+        const baseUrl = (cfg.get('apiBaseUrl') || '').trim();
         const mode    = cfg.get('approvalMode') || 'manual';
 
         // Build attachment block (active editor context)
@@ -207,6 +216,16 @@ class AgentLoop {
         // sub-agents appeared one after another instead of in parallel.
         const READ_ONLY = new Set(['read_file', 'list_dir', 'grep_search', 'find_files', 'web_search', 'web_fetch', 'spawn_agent']);
 
+        // ── Issue #100: active verification nudge + failure safety valve ──────
+        // wantsVerifyNudge: set when the user's message suggests a fix/debug intent.
+        //   Cleared once run_shell is first called in this turn.
+        // verifyNudgeEmitted: ensures we inject the reminder at most once per turn.
+        // shellFailCounts: tracks consecutive failures per normalized command.
+        const FIX_KEYWORDS = /修复|报错|不工作|失败|\bfix\b|\berror\b|\bbroken\b|\bfail\b/i;
+        let wantsVerifyNudge  = FIX_KEYWORDS.test(typeof text === 'string' ? text : '');
+        let verifyNudgeEmitted = false;
+        const shellFailCounts = new Map();
+
         let iter = 0;
         const recentToolSig   = [];
         const repeatHintEmitted = new Set();
@@ -266,6 +285,19 @@ class AgentLoop {
                         });
                         Logger.info('PLAN_NUDGE_INJECTED', { sid, iter, staleFor });
                     }
+                }
+
+                // Issue #100 — active verification nudge
+                // Inject once per turn when the user's request is fix/debug oriented and
+                // run_shell has not yet been called.  Encourages the model to close the
+                // "edit → verify" loop autonomously.
+                if (wantsVerifyNudge && !verifyNudgeEmitted) {
+                    verifyNudgeEmitted = true;
+                    run.messages.push({
+                        role: 'user',
+                        content: `<system-reminder>\nThis is a fix or debug task. After every code change, proactively run the relevant tests / build / lint via \`run_shell\` to verify the fix. Do NOT ask the user to run commands manually unless they require interactive input.\n</system-reminder>`,
+                    });
+                    Logger.info('VERIFY_NUDGE_INJECTED', { sid, iter });
                 }
 
                 // effectiveSysPrompt: no longer modified per-iter; skill is now injected as
@@ -350,8 +382,8 @@ class AgentLoop {
                 postProgress('waiting_first_token');
 
                 let _gotFirstToken = false;
-                const { toolCalls, usage } = await streamDeepSeek(
-                    { apiKey, baseUrl, messages: finalMsgs, model, noTools: askMode, tools: allTools },
+                const { toolCalls, usage } = await streamChat(
+                    { provider, apiKey, baseUrl, messages: finalMsgs, model, noTools: askMode, tools: allTools },
                     {
                         onDelta: (delta) => {
                             if (!_gotFirstToken) { _gotFirstToken = true; postProgress('streaming'); }
@@ -530,13 +562,66 @@ class AgentLoop {
                     if (tc.name === 'run_shell' && resStr.length > COMPRESS_THRESHOLD && SHELL_ERROR_PAT.test(resStr)) {
                         const lastMsg = run.messages[run.messages.length - 1];
                         if (lastMsg && lastMsg.role === 'tool' && lastMsg.tool_call_id === tc.id) {
-                            const head = resStr.slice(0, 300);
-                            const tail = resStr.slice(-100);
-                            lastMsg.content = `${head}\n...[error output compressed: ${resStr.length} chars total]...\n${tail}`;
+                            // Compress the `text` field inside the JSON to preserve a valid
+                            // structured payload; only fall back to raw-string slicing when
+                            // the result is not a JSON object (old error-path strings).
+                            let compressed = resStr;
+                            try {
+                                const parsed = JSON.parse(resStr);
+                                if (parsed && typeof parsed.text === 'string' && parsed.text.length > COMPRESS_THRESHOLD) {
+                                    const head = parsed.text.slice(0, 300);
+                                    const tail = parsed.text.slice(-100);
+                                    parsed.text = `${head}\n...[compressed: ${parsed.text.length} chars total]...\n${tail}`;
+                                    compressed = JSON.stringify(parsed);
+                                }
+                            } catch {
+                                // Plain string result (error/timeout path) — slice the raw string.
+                                const head = resStr.slice(0, 300);
+                                const tail = resStr.slice(-100);
+                                compressed = `${head}\n...[error output compressed: ${resStr.length} chars total]...\n${tail}`;
+                            }
+                            lastMsg.content = compressed;
                             Logger.info('TOOL_RESULT_COMPRESSED', { tool: tc.name, original: resStr.length, compressed: lastMsg.content.length });
                         }
                     }
-                }
+
+                    // (e) Issue #100 — failure safety valve: same command fails ≥ 3 times.
+                    // Normalise the command string, track per-command failure count, and
+                    // inject a "stop / switch strategy" hint once the threshold is reached.
+                    if (tc.name === 'run_shell') {
+                        // run_shell was invoked — no longer need the verify nudge
+                        wantsVerifyNudge = false;
+                        // Determine whether this invocation was a failure.
+                        // shell.js returns a JSON object on normal exit and a plain string
+                        // on error paths; check both representations.
+                        const isShellFailure = (() => {
+                            try { const p = JSON.parse(resStr); return p.exitCode !== 0; } catch {}
+                            return /^(?:Exit |Error:)/.test(resStr);
+                        })();
+                        let cmdKey = '';
+                        try {
+                            const a = typeof tc.args === 'string' ? JSON.parse(tc.args || '{}') : (tc.args || {});
+                            cmdKey = String(a.command || '').replace(/\s+/g, ' ').trim();
+                        } catch {}
+                        if (cmdKey) {
+                            if (isShellFailure) {
+                                const failCount = (shellFailCounts.get(cmdKey) || 0) + 1;
+                                shellFailCounts.set(cmdKey, failCount);
+                                const hintKey = '__shell_fail__' + cmdKey;
+                                if (failCount >= 3 && !repeatHintEmitted.has(hintKey)) {
+                                    repeatHintEmitted.add(hintKey);
+                                    pendingHints.push({
+                                        role: 'user',
+                                        content: `<system-reminder>\nThe command \`${cmdKey}\` has failed ${failCount} consecutive times. Stop retrying this exact approach. Switch strategy — try a different command, a different fix, or explain clearly to the user what is blocking and suggest concrete next steps. Do not run the same failing command again.\n</system-reminder>`,
+                                    });
+                                    Logger.info('SHELL_FAIL_VALVE_INJECTED', { command: cmdKey, failCount });
+                                }
+                            } else {
+                                shellFailCounts.delete(cmdKey); // reset on success
+                            }
+                        }
+                    }
+                } // end Phase 3 for-loop
 
                 // Append deferred hints after all tool messages — preserves the required
                 // API sequence: assistant{tool_calls} → N×tool → (optional) user hints.
@@ -563,8 +648,8 @@ class AgentLoop {
                     { role: 'user', content: '<system-reminder>\nYou have reached the tool-call iteration limit without producing a user-facing answer. Stop calling tools. Write a concise plain-text reply that: (1) summarises what you tried, (2) states what you found or could not find, (3) suggests a concrete next step the user can take.\n</system-reminder>' },
                 ];
                 let tail = '';
-                await streamDeepSeek(
-                    { apiKey, baseUrl, messages: finalMsgs, model, noTools: true },
+                await streamChat(
+                    { provider, apiKey, baseUrl, messages: finalMsgs, model, noTools: true },
                     {
                         onDelta:    t => { tail += t; run.reply.asst += t; this._postToRun(run, { type: 'replyDelta', text: t }); },
                         onThinking: t => { run.reply.thoughts += t; this._postToRun(run, { type: 'thinkingDelta', text: t }); },

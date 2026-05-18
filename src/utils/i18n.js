@@ -4,33 +4,16 @@
 'use strict';
 
 const vscode = require('../vscode-shim');
-const os = require('os');
 
 function isZh() {
     try {
-        // Electron main process
-        if (typeof global !== 'undefined' && global.__deepcopilot && global.__deepcopilot.locale) {
-            return global.__deepcopilot.locale.startsWith('zh');
-        }
-        // VS Code shim
-        const lang = (vscode.env && vscode.env.language) || '';
-        if (lang && lang !== 'en') return lang.toLowerCase().startsWith('zh');
-        // Fallback: check OS locale
-        const lc = process.env.LANG || process.env.LANGUAGE || process.env.LC_ALL || '';
-        if (lc) return lc.toLowerCase().startsWith('zh');
-        // Check platform locale on Windows
-        if (process.platform === 'win32') {
-            try {
-                const out = require('child_process').execSync('chcp 2>&1', { encoding: 'utf8', timeout: 1000 });
-                if (out.includes('936')) return true; // GBK codepage = Chinese
-            } catch {}
-        }
-        return false;
+        const lang = (vscode.env && vscode.env.language) || 'en';
+        return lang.toLowerCase().startsWith('zh');
     } catch { return false; }
 }
 
 const EN = {
-    apiKeyPrompt: 'Enter your DeepSeek API key (stored locally)',
+    apiKeyPrompt: 'Enter your DeepSeek API key (saved to VS Code SecretStorage)',
     apiKeySaved: 'Deep Copilot: API key saved.',
     apiKeyDeleted: 'Deep Copilot: API key removed.',
     apiKeyMissing: 'Please set your DeepSeek API key first — click the key icon in the toolbar.',
@@ -68,6 +51,7 @@ const EN = {
     deniedReadonly: 'Denied: Read-Only mode is active.',
     writeFileLabel: 'Write file: ',
     runCmdLabel: 'Run: ',
+    createSkillLabel: 'Create skill: ',
     insertNoEditor: 'Open a file in the editor first.',
     inserted: 'Code inserted.',
     copied: 'Copied to clipboard.',
@@ -76,16 +60,16 @@ const EN = {
     sessionUntitled: 'Untitled',
     errTitle: 'Request failed',
     errTitle401: 'Invalid or expired API Key',
-    errTip401: 'Click the 🔑 button to re-enter your DeepSeek API key. Make sure the key has not expired or been disabled.',
+    errTip401: 'Click the 🔑 button to re-enter your API key. Make sure the key has not expired or been disabled.',
     errTitle402: 'Insufficient account balance',
-    errTip402: 'Please top up your DeepSeek account and try again.',
+    errTip402: 'Please top up your account and try again.',
     errTitle429: 'Rate limit exceeded',
-    errTip429: 'You have hit the DeepSeek rate limit. Wait a few seconds and click Retry.',
+    errTip429: 'You have hit the provider rate limit. Wait a few seconds and click Retry.',
     errTitle400: 'Bad request',
     errTip400: 'The context may be too long or the message format may be invalid. Try clearing the session (Ctrl+K) and retrying.',
-    errTitle5xx: 'DeepSeek service error',
+    errTitle5xx: 'Service error',
     errNetwork: 'Network connection failed',
-    errTipNetwork: 'Cannot reach the DeepSeek API. Check your network, proxy, or firewall settings.',
+    errTipNetwork: 'Cannot reach the API. Check your network, proxy, or firewall settings.',
     errAborted: 'Generation stopped',
     errTipAborted: 'Generation was interrupted by the user.',
     wvWelcomeSub:       'Open, fair, and accessible AI productivity for all',
@@ -98,20 +82,26 @@ const EN = {
     wvNewSession:       'New Session',
     wvNoSessions:       'No sessions',
     wvThinking:         '● ● ● Thinking...',
-    wvAttachBadge:      '📎 Will include current file / selection',
     wvInputPlaceholder: 'Describe what you want to build',
-    wvAttachTitle:      'Include current file / selection',
     wvSend:             'Send',
     wvApiTitle:         'API settings · DeepSeek / Tavily / Base URL',
     wvCacheTitle:       'Prompt cache hit rate (higher = cheaper)',
     wvSwitchModel:      'Switch model',
     wvApprovalMode:     'Approval Mode',
+    wvInteractionMode:  'Interaction Mode',
     wvBalanceTitle:     'Account balance (click to refresh)',
     wvBalanceInit:      '💰 Checking...',
+
+    // run_shell stall/timeout diagnostics — issue #69
+    // The bracketed `[Note: ...]` prefix is a stable marker token the LLM is
+    // instructed (via tools/schema.js) to detect; keep it identical across
+    // locales and only localize the trailing human-readable explanation.
+    shellNoOutput:      '[Note: no output for last {sec}s]',
+    shellSilentTimeout: '[Note: process was silent for last {sec}s before timeout — likely hung (e.g. port in use, waiting for input, blocked on external resource). Do NOT retry blindly; report the situation to the user.]',
 };
 
 const ZH = {
-    apiKeyPrompt: '输入 DeepSeek API Key（加密存储在本地）',
+    apiKeyPrompt: '输入 DeepSeek API Key（保存到 VS Code SecretStorage，不会写入 settings.json）',
     apiKeySaved: 'Deep Copilot：API Key 已保存。',
     apiKeyDeleted: 'Deep Copilot：API Key 已删除。',
     apiKeyMissing: '请先设置 API Key — 点击工具栏 🔑 按钮。',
@@ -149,6 +139,7 @@ const ZH = {
     deniedReadonly: '已拒绝：当前为只读模式。',
     writeFileLabel: '写入文件：',
     runCmdLabel: '执行命令：',
+    createSkillLabel: '创建技能：',
     insertNoEditor: '请先在编辑器中打开一个文件。',
     inserted: '代码已插入编辑器。',
     copied: '已复制到剪贴板。',
@@ -157,16 +148,16 @@ const ZH = {
     sessionUntitled: '未命名',
     errTitle: '请求失败',
     errTitle401: 'API Key 无效或已过期',
-    errTip401: '请打开右上角 🔑 重新设置 DeepSeek API Key，确认密钥未过期且未被禁用。',
+    errTip401: '请打开右上角 🔑 重新设置 API Key，确认密钥未过期且未被禁用。',
     errTitle402: '账户余额不足',
-    errTip402: '请前往 DeepSeek 控制台充值后再试。',
+    errTip402: '请前往控制台充値后再试。',
     errTitle429: '请求过于频繁(限流)',
-    errTip429: '已触发 DeepSeek 限流。请稍候几秒再点击「重试」。',
+    errTip429: '已触发限流。请稍候几秒再点击「重试」。',
     errTitle400: '请求参数错误',
     errTip400: '可能是上下文过长或消息格式异常。可尝试清空会话(Ctrl+K)后重试。',
-    errTitle5xx: 'DeepSeek 服务异常',
+    errTitle5xx: '服务异常',
     errNetwork: '网络连接失败',
-    errTipNetwork: '无法连接 DeepSeek API。请检查网络/代理/防火墙设置。',
+    errTipNetwork: '无法连接 API。请检查网络/代理/防火墙设置。',
     errAborted: '已停止生成',
     errTipAborted: '生成被用户中断。',
     wvWelcomeSub:       '让高质量 AI 生产力开放、公平、普惠',
@@ -179,16 +170,21 @@ const ZH = {
     wvNewSession:       '新建会话',
     wvNoSessions:       '暂无会话',
     wvThinking:         '● ● ● 思考中...',
-    wvAttachBadge:      '📎 将附带当前文件 / 选中代码',
     wvInputPlaceholder: '描述要构建的内容',
-    wvAttachTitle:      '包含当前文件 / 选中代码',
     wvSend:             '发送',
     wvApiTitle:         'API 设置 · DeepSeek / Tavily / Base URL',
     wvCacheTitle:       'prompt 缓存命中率（越高越省钱）',
     wvSwitchModel:      '切换模型',
     wvApprovalMode:     '批准策略 (Approval Mode)',
+    wvInteractionMode:  '交互模式',
     wvBalanceTitle:     '账户余额（点击刷新）',
     wvBalanceInit:      '💰 查询中…',
+
+    // run_shell stall/timeout diagnostics — issue #69
+    // 方括号内的 `[Note: ...]` 是给模型识别的稳定标记，跨语言保持一致；
+    // 仅本地化后面的中文说明部分。
+    shellNoOutput:      '[Note: no output for last {sec}s]（进程仍在运行，已 {sec} 秒未输出）',
+    shellSilentTimeout: '[Note: process was silent for last {sec}s before timeout — likely hung]（超时前 {sec} 秒静默，疑似挂起：端口被占用 / 等待输入 / 外部资源阻塞。不要盲目重试，请向用户报告。）',
 };
 
 function t(key) {
@@ -196,6 +192,8 @@ function t(key) {
     return bundle[key] != null ? bundle[key] : (EN[key] != null ? EN[key] : key);
 }
 
+// Formatted variant of t() — substitutes {placeholder} tokens with values
+// from params. Use for messages that need runtime values interpolated.
 function tf(key, params) {
     let s = t(key);
     if (params) {

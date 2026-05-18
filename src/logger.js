@@ -2,7 +2,7 @@
 // so the user can share it for offline diagnosis when things hang or misbehave.
 'use strict';
 
-const vscode = require('./vscode-shim');
+const vscode = require('../vscode-shim');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
